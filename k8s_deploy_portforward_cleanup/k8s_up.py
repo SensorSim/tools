@@ -16,8 +16,6 @@ FORWARDS = [
     ("controller", 8083),
 ]
 
-ROOT = Path(__file__).resolve().parents[1]
-K8S = ROOT / "infra" / "k8s"
 MANIFESTS = ["namespace.yaml", "platform.yaml", "apps.yaml", "hpa.yaml"]
 
 
@@ -30,6 +28,22 @@ def cap(cmd):
     print(">", " ".join(cmd))
     p = subprocess.run(cmd, text=True, check=False, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     return p.stdout
+
+
+def find_project_root(start: Path) -> Path:
+    """
+    Walk upwards until we find infra/k8s.
+    This keeps paths stable even if the script is moved inside tools/* subfolders.
+    """
+    p = start.resolve()
+    for _ in range(10):
+        candidate = p / "infra" / "k8s"
+        if candidate.exists():
+            return p
+        if p.parent == p:
+            break
+        p = p.parent
+    raise RuntimeError("Could not find project root (expected infra/k8s). Run this from inside the repo.")
 
 
 def port_free(p: int) -> bool:
@@ -84,9 +98,10 @@ def wait_ns_gone(max_s: int = 180):
     return False
 
 
-def apply_all():
+def apply_all(project_root: Path):
+    k8s_dir = project_root / "infra" / "k8s"
     for f in MANIFESTS:
-        path = K8S / f
+        path = k8s_dir / f
         if path.exists():
             sh(["kubectl", "apply", "-f", str(path)])
         else:
@@ -174,12 +189,15 @@ def main():
         return 1
     print("context:", ctx)
 
+    project_root = find_project_root(Path(__file__).resolve())
+    print("project root:", project_root)
+
     if args.reset:
         delete_ns()
         wait_ns_gone()
 
     if not args.no_apply:
-        apply_all()
+        apply_all(project_root)
 
     if not args.no_wait:
         wait_ready(args.timeout)
@@ -195,7 +213,6 @@ def main():
         p = start_pf(svc, lp, sp, args.pf_windows)
         time.sleep(0.4)
 
-        # if it died immediately, show whatever it printed (only when not using separate windows)
         if p.poll() is not None:
             msg = ""
             if p.stdout:
